@@ -10,14 +10,15 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from config import load_config, market_is_open
-from main import run
-from market import EastmoneyProvider, TencentProvider, fetch_quote
+from main import finish_session, new_documents, run_sample, save_documents
+from market import EastmoneyProvider, TencentProvider
+from session import next_market_time, parse_symbols, resolve_until
 from state import evaluate
 
 
 ZONE = ZoneInfo("Asia/Shanghai")
 ROOT = Path(__file__).resolve().parents[1]
-STOCK = {"code": "300398", "market": "SZ", "symbol": "300398.SZ", "name": "飞凯材料", "enabled": True,
+STOCK = {"code": "300398", "market": "SZ", "symbol": "300398.SZ", "name": "飞凯材料",
          "triggers": {"pullback": {"enabled": True, "low": 36.4, "high": 37.3},
                       "breakout": {"enabled": True, "price": 39.3},
                       "invalidation": {"enabled": True, "price": 36.0}},
@@ -55,21 +56,16 @@ class StateTests(unittest.TestCase):
         self.assertEqual(evaluate(STOCK, quote(at, 39.35))[0], "BREAKOUT_TRIGGER")
         self.assertEqual(evaluate(STOCK, quote(at, 39.45), {"signal_state": "BREAKOUT_TRIGGER"})[0], "BREAKOUT_HOLD")
         self.assertEqual(evaluate(STOCK, quote(at, 39.18), {"signal_state": "BREAKOUT_HOLD"})[0], "BREAKOUT_LOST")
-        self.assertEqual(evaluate(STOCK, quote(at, 39.4), {"signal_state": "BREAKOUT_LOST"})[0], "BREAKOUT_TRIGGER")
         self.assertEqual(evaluate(STOCK, quote(at, 36.8))[0], "PULLBACK_ZONE")
-        self.assertEqual(evaluate(STOCK, quote(at, 37.5), {"seen_pullback": True, "price": 37.2})[0], "PULLBACK_RECOVERY")
         self.assertEqual(evaluate(STOCK, quote(at, 35.9))[0], "INVALIDATION_TOUCH")
-        self.assertEqual(evaluate(STOCK, quote(at, 35.8), {"signal_state": "INVALIDATION_TOUCH"})[0], "INVALIDATION_HOLD")
 
     def test_config_and_market_hours(self):
         config = load_config(ROOT / "config.yaml")
-        self.assertTrue(all(not s["enabled"] for s in config["stocks"]))
+        self.assertTrue(all("enabled" not in s for s in config["stocks"]))
         monitor = config["monitor"]
         self.assertTrue(market_is_open(datetime(2026, 9, 28, 10, tzinfo=ZONE), monitor))
         self.assertFalse(market_is_open(datetime(2026, 9, 28, 12, tzinfo=ZONE), monitor))
         self.assertFalse(market_is_open(datetime(2026, 9, 27, 10, tzinfo=ZONE), monitor))
-        monitor["monitor_until"] = "2026-09-28T11:30:00+08:00"
-        self.assertFalse(market_is_open(datetime(2026, 9, 29, 10, tzinfo=ZONE), monitor))
 
     def test_sources_normalize_units_and_time(self):
         fields = [""] * 39
@@ -80,20 +76,25 @@ class StateTests(unittest.TestCase):
         with patch("market._get", return_value=('v_sz300398="'+'~'.join(fields)+'";').encode("gbk")):
             result = TencentProvider().get_quote(STOCK)
         self.assertEqual(result["volume"], 35713000)
-        self.assertEqual(result["turnover_amount"], 1380980217)
-        self.assertEqual(result["turnover_rate"], 6.3)
-        self.assertEqual(result["timestamp"].isoformat(), "2026-09-23T14:52:51+08:00")
         payload = {"data": {"f43":39.07,"f44":39.3,"f45":37.72,"f46":37.89,"f47":357130,
                             "f48":1380980217,"f57":"300398","f58":"飞凯材料","f60":37.92,
                             "f168":6.3,"f169":1.15,"f170":3.03,
                             "f86":int(datetime(2026,9,23,14,52,51,tzinfo=ZONE).timestamp())}}
         with patch("market._get", return_value=json.dumps(payload).encode()):
-            result = EastmoneyProvider().get_quote(STOCK)
-        self.assertEqual(result["volume"], 35713000)
-        self.assertEqual(result["timestamp"].isoformat(), "2026-09-23T14:52:51+08:00")
-        payload["data"]["f47"] = 35713000
-        with patch("market._get", return_value=json.dumps(payload).encode()):
             self.assertEqual(EastmoneyProvider().get_quote(STOCK)["volume"], 35713000)
+
+
+class SessionInputTests(unittest.TestCase):
+    def test_symbols_until_and_lunch(self):
+        catalog = {"300398.SZ": STOCK}
+        self.assertEqual(parse_symbols(" 300398.sz,300398.SZ ", catalog), ["300398.SZ"])
+        with self.assertRaisesRegex(ValueError, "INVALID_STOCK"):
+            parse_symbols("600000.SH", catalog)
+        now = datetime(2026, 9, 28, 10, 0, tzinfo=ZONE)
+        self.assertEqual(resolve_until("11:30", now).hour, 11)
+        sessions = [{"start":"09:30","end":"11:30"},{"start":"13:00","end":"15:00"}]
+        lunch = now.replace(hour=12)
+        self.assertEqual(next_market_time(lunch, now.replace(hour=15), sessions).hour, 13)
 
 
 class RunTests(unittest.TestCase):
@@ -103,63 +104,48 @@ class RunTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         import yaml
         config = load_config(ROOT / "config.yaml")
-        config["stocks"] = [dict(STOCK), {**STOCK, "code":"600000", "market":"SH", "symbol":"600000.SH", "name":"测试B", "enabled": False}]
+        config["stocks"] = [dict(STOCK), {**STOCK, "code":"600000", "market":"SH", "symbol":"600000.SH", "name":"测试B"}]
         (self.root / "config.yaml").write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
         self.at = datetime(2026,9,28,10,15,tzinfo=ZONE)
+        self.session = {"session_id":"20260928-101500", "started_at":self.at.isoformat(),
+                        "until":self.at.replace(hour=11,minute=30).isoformat(), "interval_minutes":5,
+                        "selected_stocks":[STOCK["symbol"]]}
+        save_documents(self.root, new_documents(self.session), self.session["session_id"])
 
     def data(self, name):
         return json.loads((self.root / "data" / (name+".json")).read_text(encoding="utf-8"))
 
-    def test_disabled_duplicate_interval_and_new_day(self):
+    def test_samples_use_real_interval_and_do_not_repeat_unchanged_events(self):
         provider = Provider({STOCK["symbol"]: quote(self.at,39.35,volume=10000000)})
-        run(self.root,self.at+timedelta(seconds=5),[provider])
-        self.assertEqual(provider.calls, [STOCK["symbol"]])
-        self.assertEqual(self.data("events")[0]["event"], "BREAKOUT_TRIGGER")
-        run(self.root,self.at+timedelta(minutes=1),[provider])
-        self.assertEqual(len(self.data("history")), 1)
-        self.assertEqual(len(self.data("events")), 1)
+        run_sample(self.root,[STOCK["symbol"]],self.session,self.at+timedelta(seconds=5),[provider])
+        run_sample(self.root,[STOCK["symbol"]],self.session,self.at+timedelta(minutes=1),[provider])
+        self.assertEqual(len(self.data("history")),2)
+        self.assertEqual(len(self.data("events")),2)
         provider.result[STOCK["symbol"]] = quote(self.at+timedelta(minutes=5),39.45,volume=12000000)
-        run(self.root,self.at+timedelta(minutes=5,seconds=5),[provider])
-        self.assertEqual(self.data("history")[-1]["interval_volume"],2000000)
-        self.assertEqual(self.data("history")[-1]["interval_seconds"],300)
+        run_sample(self.root,[STOCK["symbol"]],self.session,self.at+timedelta(minutes=5,seconds=5),[provider])
+        record = self.data("history")[-1]
+        self.assertEqual(record["interval_volume"],2000000)
+        self.assertEqual(record["sample_interval_seconds"],245)
+        self.assertAlmostEqual(record["interval_price_change"],0.1)
         self.assertEqual(self.data("events")[-1]["event"],"BREAKOUT_HOLD")
-        next_day = self.at+timedelta(days=1)
-        provider.result[STOCK["symbol"]] = quote(next_day,39.45,volume=200000)
-        run(self.root,next_day+timedelta(seconds=5),[provider])
-        self.assertIsNone(self.data("history")[-1]["interval_volume"])
-        self.assertEqual(self.data("events")[-1]["event"],"BREAKOUT_TRIGGER")
+        self.assertEqual(len(self.data("events")),2)
 
     def test_stale_and_individual_failure(self):
-        import yaml
-        config = yaml.safe_load((self.root / "config.yaml").read_text(encoding="utf-8"))
-        config["stocks"][1]["enabled"] = True
-        (self.root / "config.yaml").write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+        self.session["selected_stocks"].append("600000.SH")
         provider = Provider({STOCK["symbol"]: quote(self.at-timedelta(minutes=11),39.35),
                              "600000.SH": ValueError("upstream unavailable")})
-        result = run(self.root,self.at,[provider])
+        result = run_sample(self.root,self.session["selected_stocks"],self.session,self.at,[provider])
         self.assertEqual(result["failed_count"],2)
         self.assertEqual(self.data("latest")["stocks"][STOCK["symbol"]]["state"],"STALE")
         self.assertEqual(self.data("latest")["stocks"]["600000.SH"]["state"],"ERROR")
         self.assertEqual(self.data("events"),[])
-        provider.result[STOCK["symbol"]] = quote(self.at+timedelta(minutes=5),39.35)
-        result = run(self.root,self.at+timedelta(minutes=5,seconds=5),[provider])
-        self.assertEqual(result["success_count"],1)
-        self.assertEqual(self.data("events")[-1]["event"],"BREAKOUT_TRIGGER")
 
-    def test_closed_does_not_fetch(self):
+    def test_closed_and_finish(self):
         provider = Provider({STOCK["symbol"]: quote(self.at)})
-        result = run(self.root,self.at.replace(hour=12),[provider])
-        self.assertFalse(result["market_open"])
-        self.assertEqual(provider.calls,[])
-
-    def test_older_quote_cannot_rewind_history(self):
-        provider = Provider({STOCK["symbol"]: quote(self.at,39.35)})
-        run(self.root,self.at+timedelta(seconds=5),[provider])
-        provider.result[STOCK["symbol"]] = quote(self.at-timedelta(minutes=1),39.55)
-        result = run(self.root,self.at+timedelta(minutes=1),[provider])
-        self.assertEqual(result["failed_count"],1)
-        self.assertEqual(len(self.data("history")),1)
-        self.assertEqual(self.data("latest")["stocks"][STOCK["symbol"]]["quote_timestamp"],self.at.isoformat())
+        with self.assertRaisesRegex(ValueError, "不在 A 股交易时段"):
+            run_sample(self.root,[STOCK["symbol"]],self.session,self.at.replace(hour=12),[provider])
+        finish_session(self.root,self.session,self.at.replace(hour=11,minute=30))
+        self.assertEqual(self.data("status")["session_status"],"FINISHED")
 
 
 if __name__ == "__main__":

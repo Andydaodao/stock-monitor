@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -17,23 +17,11 @@ def load_config(path: Path):
         raise ValueError("config.yaml 缺少 monitor")
     monitor = config["monitor"]
     ZoneInfo(monitor.get("timezone", "Asia/Shanghai"))
-    if monitor.get("interval_minutes") != 5:
-        raise ValueError("当前 workflow 仅支持 interval_minutes: 5")
-    if not isinstance(monitor.get("enabled"), bool):
-        raise ValueError("monitor.enabled 必须是布尔值")
     if not isinstance(monitor.get("market_sessions"), list):
         raise ValueError("monitor.market_sessions 必须是列表")
     for session in monitor["market_sessions"]:
         if _clock(session["start"]) >= _clock(session["end"]):
             raise ValueError("交易时段起点必须早于终点")
-    until = monitor.get("monitor_until")
-    if until is not None:
-        if not isinstance(until, str):
-            raise ValueError("monitor_until 必须是字符串或 null")
-        if len(until) == 5:
-            _clock(until)
-        elif datetime.fromisoformat(until).tzinfo is None:
-            raise ValueError("monitor_until 的完整日期必须包含时区")
     output = monitor.get("output", {})
     for key in ("history_max_records", "event_max_records"):
         if not isinstance(output.get(key), int) or output[key] < 1:
@@ -51,8 +39,8 @@ def load_config(path: Path):
         if symbol in seen:
             raise ValueError(f"重复股票: {symbol}")
         seen.add(symbol)
-        if not isinstance(stock.get("enabled"), bool) or not stock.get("name"):
-            raise ValueError(f"股票 {symbol} 缺少 name 或 enabled")
+        if not stock.get("name"):
+            raise ValueError(f"股票 {symbol} 缺少 name")
         for kind, trigger in stock.get("triggers", {}).items():
             if kind not in ("pullback", "breakout", "invalidation", "strong_invalidation"):
                 raise ValueError(f"未知 trigger: {kind}")
@@ -77,10 +65,4 @@ def is_trading_day(now, monitor):
 def market_is_open(now, monitor):
     if not is_trading_day(now, monitor):
         return False
-    until = monitor.get("monitor_until")
-    if until:
-        if len(until) == 5 and now.time() > _clock(until):
-            return False
-        if len(until) != 5 and now > datetime.fromisoformat(until):
-            return False
     return any(_clock(s["start"]) <= now.time() < _clock(s["end"]) for s in monitor["market_sessions"])

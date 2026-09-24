@@ -1,0 +1,33 @@
+name: 发布股票雷达页面
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/index.html
+      - .github/workflows/deploy-pages.yml
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: stock-monitor-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs
+      - name: 发布 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

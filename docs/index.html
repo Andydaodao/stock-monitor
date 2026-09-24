@@ -37,10 +37,12 @@
 <header><div class="inner"><div class="eyebrow">Stock Monitor · A-share</div><h1>股票关键价位雷达</h1><p class="intro">人工设定价位，程序记录价格是否接近、触碰、突破或回落。状态是机械观测，不能代替投资判断。</p></div></header>
 <main>
   <div class="toolbar"><div><span id="status" class="badge">读取中…</span><div id="updated" class="meta"></div></div><button id="refresh" type="button">刷新页面数据</button></div>
+  <section class="panel" aria-labelledby="session-title"><h2 id="session-title">当前 Session</h2><div id="session" class="meta">正在读取运行状态…</div></section>
   <section aria-labelledby="stocks-title"><h2 id="stocks-title">监控股票</h2><div id="stocks" class="grid"><div class="empty">正在读取快照…</div></div></section>
   <section class="panel" aria-labelledby="events-title"><h2 id="events-title">最近事件</h2><ol id="events" class="events"><li class="empty">正在读取事件…</li></ol></section>
+  <section class="panel" aria-labelledby="samples-title"><h2 id="samples-title">最近采样</h2><ol id="samples" class="events"><li class="empty">正在读取采样…</li></ol></section>
   <nav class="links" aria-label="原始数据"><a href="latest.json">最新快照 JSON</a><a href="history.json">采样历史 JSON</a><a href="events.json">事件 JSON</a><a href="status.json">运行状态 JSON</a></nav>
-  <footer>报价时间来自行情源；页面刷新只读取上一次 GitHub Actions 发布的文件，不会直接触发行情采集。交易时段外的数据可能是上次收盘时的快照。</footer>
+  <footer>行情只由 GitHub-hosted runner 采集。页面每 5 分钟从本 GitHub 仓库读取一次最新 JSON，也可以手动刷新；页面不会直接访问股票行情网站，也不会启动新的监控 Session。</footer>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -56,24 +58,39 @@ function card(stock){
   head.append(title,node('span',zh[stock.state]||stock.state||'未知','state'+(bad?' bad':alert?' alert':'')));el.append(head);
   const price=node('div',fmt(stock.price),'price '+(stock.change_percent>0?'up':stock.change_percent<0?'down':''));el.append(price);
   const change=stock.change_percent==null?'—':(stock.change_percent>0?'+':'')+fmt(stock.change_percent)+'%';el.append(node('div',change,'change '+(stock.change_percent>0?'up':stock.change_percent<0?'down':'muted')));
-  const dl=node('dl');detail(dl,'报价时间',localTime(stock.quote_timestamp));detail(dl,'数据源',stock.source||'—');detail(dl,'累计成交量',stock.volume==null?'—':fmt(stock.volume,0)+' 股');detail(dl,'累计成交额',stock.turnover_amount==null?'—':fmt(stock.turnover_amount/1e8)+' 亿元');detail(dl,'换手率',stock.turnover_rate==null?'—':fmt(stock.turnover_rate)+'%');detail(dl,'采样时延',stock.data_age_seconds==null?'—':stock.freshness==='stale'?'过期 '+stock.data_age_seconds+' 秒':stock.data_age_seconds+' 秒');
+  const dl=node('dl');detail(dl,'采样时间',localTime(stock.sample_timestamp));detail(dl,'报价时间',localTime(stock.quote_timestamp));detail(dl,'数据源',stock.source||'—');detail(dl,'行情时延',stock.data_age_seconds==null?'—':stock.freshness==='stale'?'过期 '+stock.data_age_seconds+' 秒':stock.data_age_seconds+' 秒');detail(dl,'累计成交量',stock.volume==null?'—':fmt(stock.volume,0)+' 股');detail(dl,'区间成交量',stock.interval_volume==null?'—':fmt(stock.interval_volume,0)+' 股');detail(dl,'累计成交额',stock.turnover_amount==null?'—':fmt(stock.turnover_amount/1e8)+' 亿元');detail(dl,'换手率',stock.turnover_rate==null?'—':fmt(stock.turnover_rate)+'%');
   if(stock.trigger){const t=stock.trigger;detail(dl,'关注价位',t.price!=null?fmt(t.price):fmt(t.low)+'–'+fmt(t.high))}
   if(stock.error)detail(dl,'采集情况',stock.error);
   el.append(dl);return el;
 }
+function repository(){
+  if(!location.hostname.endsWith('.github.io'))return null;
+  const owner=location.hostname.slice(0,-10);const repo=location.pathname.split('/').filter(Boolean)[0];
+  return owner&&repo?{owner,repo}:null;
+}
+async function readJson(name,token){
+  const repo=repository();
+  if(!repo){const r=await fetch(name+'.json?t='+token,{cache:'no-store'});if(!r.ok)throw Error(name+' HTTP '+r.status);return r.json()}
+  const url=`https://raw.githubusercontent.com/${repo.owner}/${repo.repo}/main/docs/${name}.json?t=${token}`;
+  const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw Error(name+' GitHub HTTP '+r.status);return r.json();
+}
 async function load(){
   $('refresh').disabled=true;
   try{
-    const token=Date.now();const names=['latest','events','status'];const [latest,events,status]=await Promise.all(names.map(async name=>{const r=await fetch(name+'.json?t='+token,{cache:'no-store'});if(!r.ok)throw Error(name+' HTTP '+r.status);return r.json()}));
-    $('status').className='badge '+(status.status==='OK'?'':status.status==='PARTIAL_ERROR'?'warn':'error');
-    $('status').textContent=({OK:'采集正常',IDLE:'暂无启用股票',CLOSED:'非交易时段',DISABLED:'监控已关闭',PARTIAL_ERROR:'部分行情失败',ERROR:'行情采集失败'})[status.status]||'等待首轮采集';
-    $('updated').textContent='文件生成：'+localTime(latest.generated_at)+' · 已启用 '+(status.enabled_stocks??0)+' 只';
-    $('stocks').replaceChildren();const list=Object.values(latest.stocks||{});if(list.length){list.forEach(s=>$('stocks').append(card(s)))}else $('stocks').append(node('div','暂无启用股票。请先在 config.yaml 中开启单只股票。','empty'));
+    const token=Date.now();const [latest,history,events,status]=await Promise.all(['latest','history','events','status'].map(name=>readJson(name,token)));
+    const running=status.session_status==='RUNNING';const failed=(status.failed_count??0)>0;const overdue=running&&status.until&&Date.now()>new Date(status.until).getTime()+120000;
+    $('status').className='badge '+(failed?'warn':running?'':'warn');
+    $('status').textContent=overdue?'Session 可能已中断':running?(failed?'监控中 · 部分采集失败':'监控中'):(status.session_status==='FINISHED'?'Session 已结束':'等待启动 Session');
+    $('updated').textContent='最新数据：'+localTime(latest.generated_at)+' · 本轮 '+(status.success_count??0)+' 成功 / '+(status.failed_count??0)+' 失败';
+    const selected=(status.selected_stocks||[]).join('、')||'—';
+    $('session').textContent=`编号 ${status.session_id||'—'} · 股票 ${selected} · 开始 ${localTime(status.started_at)} · 结束 ${localTime(status.until)} · 间隔 ${status.interval_minutes??'—'} 分钟`;
+    $('stocks').replaceChildren();const list=Object.values(latest.stocks||{});if(list.length){list.forEach(s=>$('stocks').append(card(s)))}else $('stocks').append(node('div','Session 已建立，正在等待首轮交易时段采样。','empty'));
     $('events').replaceChildren();const recent=Array.isArray(events)?events.slice(-12).reverse():[];if(recent.length){recent.forEach(e=>{const li=node('li');li.append(node('time',localTime(e.timestamp),'event-time'),node('span',e.name+' · '+fmt(e.price),'event-name'),node('span',zh[e.event]||e.event,'event-kind'));$('events').append(li)})}else $('events').append(node('li','暂无状态变化事件。','empty'));
+    $('samples').replaceChildren();const samples=Array.isArray(history)?history.slice(-12).reverse():[];if(samples.length){samples.forEach(s=>{const li=node('li');const delta=s.interval_price_change==null?'—':(s.interval_price_change>0?'+':'')+fmt(s.interval_price_change);li.append(node('time',localTime(s.sample_timestamp),'event-time'),node('span',(s.name||s.symbol)+' · '+fmt(s.price),'event-name'),node('span',delta+' · '+(zh[s.state]||s.state||'—'),'event-kind'));$('samples').append(li)})}else $('samples').append(node('li','暂无采样记录。','empty'));
   }catch(error){$('status').className='badge error';$('status').textContent='读取失败';$('updated').textContent=String(error)}
   finally{$('refresh').disabled=false}
 }
-$('refresh').addEventListener('click',load);load();
+$('refresh').addEventListener('click',load);load();setInterval(load,300000);
 </script>
 </body>
 </html>

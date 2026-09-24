@@ -1,34 +1,46 @@
 # 股票关键价位雷达
 
-根据 `config.yaml` 中人工设定的股票和关键价位，在 A 股交易时段约每 5 分钟采样一次。网页与 JSON 只报告行情和机械状态，不给买卖建议，也不自动下单。
+人工通过 GitHub Actions 启动一次临时监控 Session。GitHub-hosted runner 在 A 股交易时段按设定间隔采集行情，记录价格、区间变化和关键价位机械状态；网页只读取仓库生成的 JSON，不直接访问股票行情网站。
 
-## 启用
+## 启动一次 Session
 
-1. 在 `config.yaml` 中把需要监控的股票设为 `enabled: true`。总开关 `monitor.enabled` 默认开启，但样例股票全部关闭，不会抓取。
-2. 按自己的研究修改回踩区、突破价和失效价。增减股票只改 `config.yaml`，代码、市场与代码后缀必须一致，例如 `600000.SH`。
-3. `monitor_until` 可留 `null`，写 `"11:30"` 表示每天到该时刻停止，或写 `"2026-09-28T11:30:00+08:00"` 表示到指定日期时间后停止。
+1. 在仓库 **Actions → 启动股票监控 Session → Run workflow**。
+2. `stocks` 填写本次监控股票，多个代码用英文逗号分隔，例如 `300398.SZ,300502.SZ`。代码必须已存在于 `config.yaml`。
+3. `until` 填写北京时间的当日结束时刻，例如 `11:30` 或 `15:00`。
+4. `interval_minutes` 默认 `5`，不能小于 5。
+5. 点击 **Run workflow**。关闭 GitHub 和雷达网页不会停止 Session；需要提前结束时，在 Actions 运行详情中选择 **Cancel workflow**。
 
-请把整个项目目录上传到自己新建的 GitHub 仓库根目录，保留 `.github/workflows/monitor.yml`。在仓库 **Settings → Pages → Build and deployment** 选择 **GitHub Actions**；在 **Settings → Actions → General → Workflow permissions** 允许 **Read and write permissions**。首次上传会触发 workflow；之后可在 **Actions → 采集并发布股票雷达 → Run workflow** 手动执行，交易时段之外会正常退出。`config.yaml` 的网页提交也会触发一次。
+新的 Session 会取消仍在运行的旧 Session。Session 在交易时段立即采集，午休期间等待至 13:00，到结束时刻自动写入 `FINISHED`。第一版按周一至周五判断交易日，法定休市日会由过期行情保护阻止产生新事件。
 
-公开网址为 `https://<用户名>.github.io/<仓库名>/`，同目录下有 `latest.json`、`history.json`、`events.json`、`status.json`。`data/` 保存跨次运行状态，`docs/` 是 Pages 发布内容；自动提交仅更新这些 JSON，不会改人工配置。
+## 配置股票
 
-## 本地运行
+`config.yaml` 只保存长期研究配置，包括股票代码、名称、市场、回踩区、突破位、失效位和预警距离。增加股票或修改关键价位时才需要提交该文件；启动、停止或切换本次监控股票不需要修改配置。
 
-使用 Python 3.11 或更新版本：
+股票代码、市场和后缀必须一致，例如 `600000.SH`。Python 不写死股票和价位。
 
-```sh
-python -m pip install -r requirements.txt
-python src/main.py
-python -m http.server 8766 --directory docs
-```
+## GitHub 设置
 
-然后打开 `http://127.0.0.1:8766/`。本地若无法连接公开行情源，程序会在 `status.json` 记录单股错误，其他股票仍可继续。
+在仓库 **Settings → Pages → Build and deployment** 选择 **GitHub Actions**，并在 **Settings → Actions → General → Workflow permissions** 允许 **Read and write permissions**。
+
+`.github/workflows/deploy-pages.yml` 在页面文件变化时发布网页；`.github/workflows/monitor.yml` 只由 Run workflow 启动。监控过程每轮都会提交四个 JSON，因此中途取消或失败不会丢失此前已经完成的采样。数据提交不会递归启动新的 Session。
+
+网页地址为 `https://<用户名>.github.io/<仓库名>/`。页面每 5 分钟从 GitHub 仓库读取最新的 `latest.json`、`history.json`、`events.json` 和 `status.json`；手动刷新也会立即重新读取。每次 Session 另存于 `data/sessions/<session_id>/`。
 
 ## 数据口径
 
-- 主源为腾讯行情，备用源为东方财富。成交量统一为“股”，成交额统一为“元”，换手率与涨跌幅为百分数；备用源的成交量单位用成交额和当日价格区间核验，核验失败会报错。行情源返回的时间是 `quote_timestamp`；`generated_at` 是脚本生成文件的时间，两者不能混同。
-- `fresh` 为不超过 300 秒；301–600 秒为 `acceptable`；超过 600 秒为 `STALE`，不产生新事件。来源无有效时间戳也不能触发事件。一次实际采样可能延迟或漏跑，`interval_volume` 是与上一个有效报价的差额，`interval_seconds` 记录真实间隔。
-- 新交易日会重置临时状态与成交量基线，但保留历史；节假日首版只靠周末判断，工作日休市会依赖行情时间戳进入过期状态。`BREAKOUT_HOLD` 表示连续两次样本位于突破价上方，并不保证两次采样之间一直站稳。
-- 数据源是公开网页接口，没有稳定性承诺。若要把实时行情重新发布到公开 Pages，应先确认所用行情源的使用和再发布条款。GitHub 定时任务也可能延迟或跳过，不能用于需要准点或交易级可靠性的场景。
+- 主源为腾讯行情，备用源为东方财富。所有行情请求只允许从 `runs-on: ubuntu-latest` 的 GitHub-hosted runner 发出。成交量统一为“股”，成交额统一为“元”，换手率与涨跌幅为百分数。
+- `quote_timestamp` 是行情源时间，`sample_timestamp` 是本轮实际采样时间，`sample_interval_seconds` 保存实际间隔。区间价格、成交量和成交额均以前后两次有效采样计算。
+- `fresh` 为不超过 300 秒；301–600 秒为 `acceptable`；超过 600 秒为 `STALE`。过期行情允许保存，但不会产生新的关键价位事件。
+- 状态只表示价格与人工价位的机械关系，不输出买入、卖出或自动交易指令。
+- 公共行情接口和 GitHub Actions 都没有交易级可靠性承诺，本工具不适合准点交易或自动下单。
 
-运行单元测试：`python -m unittest discover -s tests -v`。
+## 本地查看与测试
+
+本地只允许查看已有 JSON 和运行无网络单元测试，不运行实时行情 Session：
+
+```sh
+python -m http.server 8766 --directory docs
+python -m unittest discover -s tests -v
+```
+
+实时 Session 的入口会校验 `GITHUB_ACTIONS=true` 与 `RUNNER_ENVIRONMENT=github-hosted`，防止从本地电脑直接访问行情源。
