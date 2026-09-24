@@ -1,0 +1,50 @@
+monitor:
+  enabled: true
+  timezone: Asia/Shanghai
+  market_sessions:
+    - start: "09:30"
+      end: "11:30"
+    - start: "13:00"
+      end: "15:00"
+  interval_minutes: 5
+  monitor_until: null
+  trading_day_only: true
+  output:
+    history_max_records: 5000
+    event_max_records: 1000
+
+stocks:
+  - code: "300398"
+    market: SZ
+    symbol: 300398.SZ
+    name: 飞凯材料
+    enabled: false
+    triggers:
+      pullback: {enabled: true, low: 36.40, high: 37.30}
+      breakout: {enabled: true, price: 39.30}
+      invalidation: {enabled: true, price: 36.00}
+      strong_invalidation: {enabled: true, price: 34.80}
+    alert: {pre_alert_percent: 1.0}
+
+  - code: "688279"
+    market: SH
+    symbol: 688279.SH
+    name: 峰岹科技
+    enabled: false
+    triggers:
+      pullback: {enabled: true, low: 198.00, high: 203.00}
+      breakout: {enabled: true, price: 208.00}
+      invalidation: {enabled: true, price: 194.00}
+      strong_invalidation: {enabled: true, price: 187.00}
+    alert: {pre_alert_percent: 1.0}
+
+  - code: "300502"
+    market: SZ
+    symbol: 300502.SZ
+    name: 新易盛
+    enabled: false
+    triggers:
+      pullback: {enabled: true, low: 438.00, high: 445.00}
+      breakout: {enabled: true, price: 475.00}
+      invalidation: {enabled: true, price: 420.00}
+    alert: {pre_alert_percent: 1.0}

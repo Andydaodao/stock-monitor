@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#103b38">
+  <title>股票关键价位雷达</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#17332f;background:#f3f5f2}
+    *{box-sizing:border-box}body{margin:0}main{max-width:1120px;margin:auto;padding:30px 22px 56px}
+    header{background:#103b38;color:#f5f9f4;padding:40px 0 36px}header .inner{max-width:1120px;margin:auto;padding:0 22px}
+    .eyebrow{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#a7ccba;font-weight:700}
+    h1{font-size:clamp(30px,5vw,48px);line-height:1.12;margin:12px 0 10px}h2{font-size:22px;margin:0 0 20px}
+    .intro{color:#bad3c8;max-width:650px;margin:0;font-size:15px;line-height:1.7}
+    .toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:22px 0;flex-wrap:wrap}
+    .badge{display:inline-flex;gap:8px;align-items:center;border-radius:999px;padding:9px 13px;background:#e2eee5;color:#205d46;font-size:13px;font-weight:700}
+    .badge.warn{background:#fff1d4;color:#956218}.badge.error{background:#fde8e6;color:#ae3e32}
+    button{border:1px solid #bdd3c9;background:white;border-radius:10px;padding:10px 14px;color:#15483c;font:inherit;font-weight:700;cursor:pointer}
+    button:hover{background:#ebf3ed}button:focus-visible,a:focus-visible{outline:3px solid #e7a64a;outline-offset:3px}
+    .meta{color:#64776f;font-size:13px;line-height:1.6}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px}
+    .card,.panel{background:#fff;border:1px solid #dfebe2;box-shadow:0 8px 28px rgba(26,65,48,.05);border-radius:18px}
+    .card{padding:20px}.card-head{display:flex;justify-content:space-between;align-items:start;gap:10px}.name{font-weight:800;font-size:21px}
+    .symbol{font-size:12px;color:#71857c;margin-top:2px}.state{font-size:11px;font-weight:800;letter-spacing:.03em;color:#12624e;background:#e5f2e9;border-radius:999px;padding:7px 9px;text-align:right;max-width:138px;overflow-wrap:anywhere}
+    .state.alert{background:#fff0d5;color:#986013}.state.bad{background:#fde8e6;color:#aa4033}
+    .price{font-size:35px;font-weight:800;letter-spacing:-.04em;margin:18px 0 2px;font-variant-numeric:tabular-nums}
+    .up{color:#bd4b39}.down{color:#168260}.muted{color:#7f9188}.change{font-weight:700;font-variant-numeric:tabular-nums}
+    dl{display:grid;grid-template-columns:1fr 1fr;gap:10px 18px;border-top:1px solid #e8eee9;margin:18px 0 0;padding-top:16px;font-size:13px}
+    dt{color:#7a8b83;margin-bottom:3px}dd{margin:0;font-weight:650;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+    .panel{padding:22px;margin-top:24px}.events{list-style:none;margin:0;padding:0}.events li{display:grid;grid-template-columns:135px minmax(0,1fr) auto;gap:12px;padding:13px 0;border-top:1px solid #edf2ee;align-items:center;font-size:13px}
+    .events li:first-child{border-top:0}.event-name{font-weight:750}.event-time{color:#788981;font-variant-numeric:tabular-nums}.event-kind{font-weight:750;color:#316e59;text-align:right;overflow-wrap:anywhere}
+    .empty{color:#788981;line-height:1.6;padding:18px 0}.links{display:flex;gap:14px;flex-wrap:wrap;margin-top:23px;font-size:13px}.links a{color:#246c57;text-decoration:none}.links a:hover{text-decoration:underline}
+    footer{font-size:12px;color:#788981;line-height:1.7;margin-top:22px}
+    @media(max-width:600px){main{padding:24px 16px 44px}header .inner{padding:0 16px}.events li{grid-template-columns:1fr auto}.event-time{grid-column:1/-1}.panel{padding:18px}}
+  </style>
+</head>
+<body>
+<header><div class="inner"><div class="eyebrow">Stock Monitor · A-share</div><h1>股票关键价位雷达</h1><p class="intro">人工设定价位，程序记录价格是否接近、触碰、突破或回落。状态是机械观测，不能代替投资判断。</p></div></header>
+<main>
+  <div class="toolbar"><div><span id="status" class="badge">读取中…</span><div id="updated" class="meta"></div></div><button id="refresh" type="button">刷新页面数据</button></div>
+  <section aria-labelledby="stocks-title"><h2 id="stocks-title">监控股票</h2><div id="stocks" class="grid"><div class="empty">正在读取快照…</div></div></section>
+  <section class="panel" aria-labelledby="events-title"><h2 id="events-title">最近事件</h2><ol id="events" class="events"><li class="empty">正在读取事件…</li></ol></section>
+  <nav class="links" aria-label="原始数据"><a href="latest.json">最新快照 JSON</a><a href="history.json">采样历史 JSON</a><a href="events.json">事件 JSON</a><a href="status.json">运行状态 JSON</a></nav>
+  <footer>报价时间来自行情源；页面刷新只读取上一次 GitHub Actions 发布的文件，不会直接触发行情采集。交易时段外的数据可能是上次收盘时的快照。</footer>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const zh = {NORMAL:'普通',PRE_ALERT:'接近突破位',PULLBACK_ZONE:'进入回踩区',PULLBACK_RECOVERY:'回踩后回升',BREAKOUT_TOUCH:'盘中触及突破位',BREAKOUT_TRIGGER:'当前价突破',BREAKOUT_HOLD:'连续样本在突破位上方',BREAKOUT_LOST:'跌回突破位下方',INVALIDATION_TOUCH:'触及失效价',INVALIDATION_HOLD:'仍在失效价下方',STRONG_INVALIDATION_TOUCH:'触及强失效价',STRONG_INVALIDATION_HOLD:'仍在强失效价下方',STALE:'行情过期',ERROR:'采集失败',PRE_ALERT_BREAKOUT:'接近突破位'};
+function node(tag,text,className){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(className)el.className=className;return el}
+function fmt(value,digits=2){return value==null?'—':Number(value).toLocaleString('zh-CN',{minimumFractionDigits:digits,maximumFractionDigits:digits})}
+function localTime(value){if(!value)return '—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d)}
+function detail(dl,label,value){const block=node('div');block.append(node('dt',label),node('dd',value));dl.append(block)}
+function card(stock){
+  const el=node('article',undefined,'card');const head=node('div',undefined,'card-head');const title=node('div');title.append(node('div',stock.name||stock.code,'name'),node('div',stock.symbol,'symbol'));
+  const bad=['STALE','ERROR','INVALIDATION_TOUCH','INVALIDATION_HOLD','STRONG_INVALIDATION_TOUCH','STRONG_INVALIDATION_HOLD'].includes(stock.state);
+  const alert=['PRE_ALERT','BREAKOUT_TOUCH','BREAKOUT_LOST'].includes(stock.state);
+  head.append(title,node('span',zh[stock.state]||stock.state||'未知','state'+(bad?' bad':alert?' alert':'')));el.append(head);
+  const price=node('div',fmt(stock.price),'price '+(stock.change_percent>0?'up':stock.change_percent<0?'down':''));el.append(price);
+  const change=stock.change_percent==null?'—':(stock.change_percent>0?'+':'')+fmt(stock.change_percent)+'%';el.append(node('div',change,'change '+(stock.change_percent>0?'up':stock.change_percent<0?'down':'muted')));
+  const dl=node('dl');detail(dl,'报价时间',localTime(stock.quote_timestamp));detail(dl,'数据源',stock.source||'—');detail(dl,'累计成交量',stock.volume==null?'—':fmt(stock.volume,0)+' 股');detail(dl,'累计成交额',stock.turnover_amount==null?'—':fmt(stock.turnover_amount/1e8)+' 亿元');detail(dl,'换手率',stock.turnover_rate==null?'—':fmt(stock.turnover_rate)+'%');detail(dl,'采样时延',stock.data_age_seconds==null?'—':stock.freshness==='stale'?'过期 '+stock.data_age_seconds+' 秒':stock.data_age_seconds+' 秒');
+  if(stock.trigger){const t=stock.trigger;detail(dl,'关注价位',t.price!=null?fmt(t.price):fmt(t.low)+'–'+fmt(t.high))}
+  if(stock.error)detail(dl,'采集情况',stock.error);
+  el.append(dl);return el;
+}
+async function load(){
+  $('refresh').disabled=true;
+  try{
+    const token=Date.now();const names=['latest','events','status'];const [latest,events,status]=await Promise.all(names.map(async name=>{const r=await fetch(name+'.json?t='+token,{cache:'no-store'});if(!r.ok)throw Error(name+' HTTP '+r.status);return r.json()}));
+    $('status').className='badge '+(status.status==='OK'?'':status.status==='PARTIAL_ERROR'?'warn':'error');
+    $('status').textContent=({OK:'采集正常',IDLE:'暂无启用股票',CLOSED:'非交易时段',DISABLED:'监控已关闭',PARTIAL_ERROR:'部分行情失败',ERROR:'行情采集失败'})[status.status]||'等待首轮采集';
+    $('updated').textContent='文件生成：'+localTime(latest.generated_at)+' · 已启用 '+(status.enabled_stocks??0)+' 只';
+    $('stocks').replaceChildren();const list=Object.values(latest.stocks||{});if(list.length){list.forEach(s=>$('stocks').append(card(s)))}else $('stocks').append(node('div','暂无启用股票。请先在 config.yaml 中开启单只股票。','empty'));
+    $('events').replaceChildren();const recent=Array.isArray(events)?events.slice(-12).reverse():[];if(recent.length){recent.forEach(e=>{const li=node('li');li.append(node('time',localTime(e.timestamp),'event-time'),node('span',e.name+' · '+fmt(e.price),'event-name'),node('span',zh[e.event]||e.event,'event-kind'));$('events').append(li)})}else $('events').append(node('li','暂无状态变化事件。','empty'));
+  }catch(error){$('status').className='badge error';$('status').textContent='读取失败';$('updated').textContent=String(error)}
+  finally{$('refresh').disabled=false}
+}
+$('refresh').addEventListener('click',load);load();
+</script>
+</body>
+</html>
