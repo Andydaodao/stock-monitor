@@ -1,5 +1,5 @@
 {
-  "session_status": "RUNNING",
+  "session_status": "FINISHED",
   "session_id": "20260924-201236",
   "started_at": "2026-09-24T20:12:36+08:00",
   "until": "2026-09-24T20:30:00+08:00",
@@ -10,5 +10,6 @@
   "last_sample_at": null,
   "success_count": 0,
   "failed_count": 0,
-  "errors": {}
+  "errors": {},
+  "finished_at": "2026-09-24T20:12:38+08:00"
 }
