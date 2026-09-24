@@ -1,1 +1,10 @@
-{}
+{
+  "generated_at": "2026-09-24T17:28:34+08:00",
+  "status": "CLOSED",
+  "monitor_enabled": true,
+  "market_open": false,
+  "enabled_stocks": 0,
+  "success_count": 0,
+  "failed_count": 0,
+  "errors": {}
+}
