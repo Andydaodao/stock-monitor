@@ -1,5 +1,14 @@
 {
-  "generated_at": "2026-09-24T17:28:34+08:00",
-  "monitor_enabled": true,
+  "generated_at": "2026-09-24T20:12:36+08:00",
+  "session": {
+    "session_id": "20260924-201236",
+    "started_at": "2026-09-24T20:12:36+08:00",
+    "until": "2026-09-24T20:30:00+08:00",
+    "interval_minutes": 5,
+    "selected_stocks": [
+      "300398.SZ"
+    ],
+    "status": "RUNNING"
+  },
   "stocks": {}
 }
